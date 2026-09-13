@@ -17,8 +17,8 @@
     label { display: block; margin: 9px 0 5px; color: #76695e; font-size: 13px; }
     .app { display: grid; grid-template-columns: 280px 1fr 340px; gap: 16px; padding: 16px; align-items: start; }
     .panel { background: #fffaf2; border: 1px solid #d9cdbc; border-radius: 8px; padding: 14px; }
-    .grid { display: grid; gap: 2px; margin: 0 auto; width: min(100%, 720px); border: 6px solid #72533c; background: #72533c; }
-    .cell { aspect-ratio: 1; background: #f8ead2; cursor: pointer; border-radius: 2px; }
+    .grid { display: grid; gap: 2px; margin: 0 auto; width: min(100%, 720px); border: 6px solid #72533c; background: #72533c; touch-action: none; }
+    .cell { aspect-ratio: 1; background: #f8ead2; cursor: pointer; border-radius: 2px; user-select: none; -webkit-user-select: none; }
     .cell.slicing { cursor: crosshair; }
     .palette { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
     .swatch { aspect-ratio: 1; border-radius: 8px; border: 3px solid transparent; cursor: pointer; }
@@ -185,30 +185,64 @@
     function effectivePieces() {
       return pieces.length ? pieces : [{ id: 0, x: 0, y: 0, w: cols, h: rows, repX: 1, repY: 1, offX: 0, offY: 0 }];
     }
-    // 扫描相邻织片边界：bad 为色序不匹配的具体缝隙，seamCells 为全部接缝长度（格）
+    // 将织片按重复与偏移展开为版图中的实例
+    function instances() {
+      const list = [];
+      effectivePieces().forEach(p => {
+        for (let i = 0; i < p.repX; i++) for (let j = 0; j < p.repY; j++)
+          list.push({ p, ox: p.offX + i * p.w, oy: p.offY + j * p.h, w: p.w, h: p.h });
+      });
+      return list;
+    }
+    // 在展开后的版图上配对相邻实例的边缘：bad 为色序不匹配的具体缝隙（含版图坐标与源格），seamCells 为全部接缝长度（格）
     function seamScan() {
       const bad = [];
       let seamCells = 0;
-      for (let a = 0; a < pieces.length; a++) for (let b = a + 1; b < pieces.length; b++) {
-        const A = pieces[a], B = pieces[b];
-        if (A.x + A.w === B.x || B.x + B.w === A.x) {
-          const L = A.x + A.w === B.x ? A : B, R = L === A ? B : A;
-          const y0 = Math.max(L.y, R.y), y1 = Math.min(L.y + L.h, R.y + R.h);
-          for (let y = y0; y < y1; y++) {
-            seamCells++;
-            if (cells[y * cols + L.x + L.w - 1] !== cells[y * cols + R.x]) bad.push({ type: "v", x: R.x, y, la: L.id, lb: R.id });
-          }
+      const rightE = new Map(), leftE = new Map(), bottomE = new Map(), topE = new Map();
+      const put = (m, x, y, v) => { const k = x + "," + y; const a = m.get(k); if (a) a.push(v); else m.set(k, [v]); };
+      instances().forEach(ins => {
+        for (let t = 0; t < ins.h; t++) {
+          put(rightE, ins.ox + ins.w, ins.oy + t, { ins, t });
+          put(leftE, ins.ox, ins.oy + t, { ins, t });
         }
-        if (A.y + A.h === B.y || B.y + B.h === A.y) {
-          const T = A.y + A.h === B.y ? A : B, D = T === A ? B : A;
-          const x0 = Math.max(T.x, D.x), x1 = Math.min(T.x + T.w, D.x + D.w);
-          for (let x = x0; x < x1; x++) {
-            seamCells++;
-            if (cells[(T.y + T.h - 1) * cols + x] !== cells[D.y * cols + x]) bad.push({ type: "h", x, y: D.y, la: T.id, lb: D.id });
-          }
+        for (let t = 0; t < ins.w; t++) {
+          put(bottomE, ins.ox + t, ins.oy + ins.h, { ins, t });
+          put(topE, ins.ox + t, ins.oy, { ins, t });
         }
-      }
+      });
+      leftE.forEach((lst, k) => {
+        const rlst = rightE.get(k);
+        if (!rlst) return;
+        const xy = k.split(","), x = +xy[0], y = +xy[1];
+        rlst.forEach(L => lst.forEach(R => {
+          seamCells++;
+          const ca = (L.ins.p.y + L.t) * cols + L.ins.p.x + L.ins.p.w - 1;
+          const cb = (R.ins.p.y + R.t) * cols + R.ins.p.x;
+          if (cells[ca] !== cells[cb]) bad.push({ type: "v", x, y, la: L.ins.p.id, lb: R.ins.p.id, ca, cb });
+        }));
+      });
+      topE.forEach((lst, k) => {
+        const blst = bottomE.get(k);
+        if (!blst) return;
+        const xy = k.split(","), x = +xy[0], y = +xy[1];
+        blst.forEach(T => lst.forEach(D => {
+          seamCells++;
+          const ca = (T.ins.p.y + T.ins.p.h - 1) * cols + T.ins.p.x + T.t;
+          const cb = D.ins.p.y * cols + D.ins.p.x + D.t;
+          if (cells[ca] !== cells[cb]) bad.push({ type: "h", x, y, la: T.ins.p.id, lb: D.ins.p.id, ca, cb });
+        }));
+      });
       return { bad, seamCells };
+    }
+    // 版图实例是否重叠（排版非法，仅提示）
+    function layoutOverlap() {
+      const ins = instances();
+      if (ins.length > 500) return false;
+      for (let a = 0; a < ins.length; a++) for (let b = a + 1; b < ins.length; b++) {
+        const A = ins[a], B = ins[b];
+        if (A.ox < B.ox + B.w && B.ox < A.ox + A.w && A.oy < B.oy + B.h && B.oy < A.oy + A.h) return true;
+      }
+      return false;
     }
 
     function render() {
@@ -233,8 +267,8 @@
         for (let y = p.y; y < p.y + p.h; y++) { mark(y * cols + p.x, "l", "#8a6d2f"); mark(y * cols + p.x + p.w - 1, "r", "#8a6d2f"); }
       });
       scan.bad.forEach(s => {
-        if (s.type === "v") { mark(s.y * cols + s.x - 1, "r", "#d61f1f"); mark(s.y * cols + s.x, "l", "#d61f1f"); }
-        else { mark((s.y - 1) * cols + s.x, "b", "#d61f1f"); mark(s.y * cols + s.x, "t", "#d61f1f"); }
+        if (s.type === "v") { mark(s.ca, "r", "#d61f1f"); mark(s.cb, "l", "#d61f1f"); }
+        else { mark(s.ca, "b", "#d61f1f"); mark(s.cb, "t", "#d61f1f"); }
       });
       if (sliceRect) {
         for (let y = sliceRect.y; y < sliceRect.y + sliceRect.h; y++) for (let x = sliceRect.x; x < sliceRect.x + sliceRect.w; x++)
@@ -251,25 +285,6 @@
         ].filter(Boolean).join(",") + ";" : "";
         return '<div class="cell'+(mode==="slice"?" slicing":"")+'" data-i="'+i+'" style="background:'+colors[v]+";"+shadow+'"></div>';
       }).join("");
-      grid.querySelectorAll(".cell").forEach(el => {
-        el.onpointerdown = () => {
-          const i = Number(el.dataset.i);
-          if (mode === "slice") {
-            sliceStart = { x: i % cols, y: Math.floor(i / cols) };
-            sliceRect = { x: sliceStart.x, y: sliceStart.y, w: 1, h: 1 };
-            render();
-          } else { dragging = true; paint(i); }
-        };
-        el.onpointerenter = () => {
-          const i = Number(el.dataset.i);
-          if (mode === "slice" && sliceStart) {
-            const x = i % cols, y = Math.floor(i / cols);
-            sliceRect = { x: Math.min(x, sliceStart.x), y: Math.min(y, sliceStart.y), w: Math.abs(x - sliceStart.x) + 1, h: Math.abs(y - sliceStart.y) + 1 };
-            render();
-          } else if (mode === "paint" && dragging) paint(i);
-        };
-      });
-      window.onpointerup = () => { dragging = false; if (sliceStart) finishSlice(); };
     }
     function finishSlice() {
       const r = sliceRect; sliceStart = null; sliceRect = null;
@@ -368,24 +383,15 @@
       const scan = seamScan();
       ctx.strokeStyle = "#d61f1f"; ctx.lineWidth = 3;
       scan.bad.forEach(s => {
-        const owner = ps.find(p => p.id === s.la);
-        if (!owner) return;
-        for (let i = 0; i < owner.repX; i++) for (let j = 0; j < owner.repY; j++) {
-          const ox = owner.offX + i * owner.w, oy = owner.offY + j * owner.h;
-          ctx.beginPath();
-          if (s.type === "v") {
-            const gx = (ox + owner.w) * scale, gy = (oy + (s.y - owner.y)) * scale;
-            ctx.moveTo(gx, gy); ctx.lineTo(gx, gy + scale);
-          } else {
-            const gx = (ox + (s.x - owner.x)) * scale, gy = (oy + owner.h) * scale;
-            ctx.moveTo(gx, gy); ctx.lineTo(gx + scale, gy);
-          }
-          ctx.stroke();
-        }
+        ctx.beginPath();
+        if (s.type === "v") { ctx.moveTo(s.x * scale, s.y * scale); ctx.lineTo(s.x * scale, (s.y + 1) * scale); }
+        else { ctx.moveTo(s.x * scale, s.y * scale); ctx.lineTo((s.x + 1) * scale, s.y * scale); }
+        ctx.stroke();
       });
       const perPlate = ps.reduce((n, p) => n + p.repX * p.repY, 0);
       layoutInfo.innerHTML = "版图 "+W+"×"+H+" 格 ≈ "+(W*CELL_CM).toFixed(1)+"×"+(H*CELL_CM).toFixed(1)+" cm · 每版织片 "+perPlate+" 片" +
-        (scan.bad.length ? ' · <span class="warning">'+scan.bad.length+' 处缝隙色序不匹配</span>' : "");
+        (scan.bad.length ? ' · <span class="warning">'+scan.bad.length+' 处缝隙色序不匹配</span>' : "") +
+        (layoutOverlap() ? ' · <span class="warning">版图中有织片重叠，请调整偏移或重复</span>' : "");
     }
     function computeBudget() {
       const ps = effectivePieces();
@@ -426,11 +432,13 @@
     function renderCraft() {
       const scan = seamScan();
       if (scan.bad.length) {
+        const item = s => "<li>" + (s.type === "v"
+          ? "竖缝 · 版图第"+s.x+"–"+(s.x+1)+"列交界 · 第"+(s.y+1)+"行"
+          : "横缝 · 版图第"+s.y+"–"+(s.y+1)+"行交界 · 第"+(s.x+1)+"列") +
+          (s.la === s.lb ? "（织片#"+s.la+" 相邻副本）" : "（织片#"+s.la+" ↔ #"+s.lb+"）") + "</li>";
         seamsBox.innerHTML = '<p class="warning">发现 '+scan.bad.length+' 处边界色序不匹配：</p><ul class="seam-list">' +
-          scan.bad.map(s => "<li>" + (s.type === "v"
-            ? "竖缝 · 第"+s.x+"–"+(s.x+1)+"列交界 · 第"+(s.y+1)+"行"
-            : "横缝 · 第"+s.y+"–"+(s.y+1)+"行交界 · 第"+(s.x+1)+"列") +
-            "（织片#"+s.la+" ↔ #"+s.lb+"）</li>").join("") + "</ul>";
+          scan.bad.slice(0, 50).map(item).join("") +
+          (scan.bad.length > 50 ? "<li>……其余 "+(scan.bad.length-50)+" 处从略</li>" : "") + "</ul>";
         confirmBtn.disabled = true;
         craftBox.innerHTML = '<p class="hint">处理全部缝隙后才能生成工艺结果。</p>';
         return;
@@ -450,6 +458,44 @@
     }
 
     document.querySelectorAll("[data-block]").forEach(btn => btn.onclick = () => block = btn.dataset.block);
+    // 指针交互统一绑定在持久的 #grid 容器上：捕获指针后用 elementFromPoint 定位单元格，
+    // 即使绘制/划片触发 render() 重建单元格，手势也不会中断。
+    let lastPaint = -1;
+    function cellFromEvent(e) {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      return el && el.classList && el.classList.contains("cell") ? el : null;
+    }
+    grid.onpointerdown = e => {
+      const cell = cellFromEvent(e);
+      if (!cell) return;
+      e.preventDefault();
+      try { grid.setPointerCapture(e.pointerId); } catch (err) {}
+      const i = Number(cell.dataset.i);
+      if (mode === "slice") {
+        sliceStart = { x: i % cols, y: Math.floor(i / cols) };
+        sliceRect = { x: sliceStart.x, y: sliceStart.y, w: 1, h: 1 };
+        render();
+      } else { dragging = true; lastPaint = i; paint(i); }
+    };
+    grid.onpointermove = e => {
+      if (mode === "slice" && sliceStart) {
+        const cell = cellFromEvent(e);
+        if (!cell) return;
+        const i = Number(cell.dataset.i);
+        const x = i % cols, y = Math.floor(i / cols);
+        const r = { x: Math.min(x, sliceStart.x), y: Math.min(y, sliceStart.y), w: Math.abs(x - sliceStart.x) + 1, h: Math.abs(y - sliceStart.y) + 1 };
+        if (r.x !== sliceRect.x || r.y !== sliceRect.y || r.w !== sliceRect.w || r.h !== sliceRect.h) { sliceRect = r; render(); }
+      } else if (mode === "paint" && dragging) {
+        const cell = cellFromEvent(e);
+        if (!cell) return;
+        const i = Number(cell.dataset.i);
+        if (i !== lastPaint) { lastPaint = i; paint(i); }
+      }
+    };
+    const endGesture = () => { dragging = false; lastPaint = -1; if (sliceStart) finishSlice(); };
+    grid.onpointerup = endGesture;
+    grid.onpointercancel = endGesture;
+    window.addEventListener("pointerup", endGesture);
     document.querySelector("#modeBtn").onclick = () => { mode = mode === "paint" ? "slice" : "paint"; sliceStart = null; sliceRect = null; sliceMsg = ""; render(); };
     document.querySelector("#newBtn").onclick = () => {
       if (pieces.length && !window.confirm("新建网格将清空现有分片与工艺确认，继续吗？")) return;
