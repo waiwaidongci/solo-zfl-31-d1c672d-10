@@ -9,14 +9,17 @@
     body { margin: 0; font-family: Arial, "PingFang SC", sans-serif; background: #f3efe7; color: #282018; }
     header { padding: 18px 24px; background: #fffaf2; border-bottom: 1px solid #d9cdbc; display: flex; justify-content: space-between; gap: 16px; align-items: center; }
     h1 { margin: 0; font-size: 26px; }
+    h2 { font-size: 18px; }
     button { border: 0; border-radius: 8px; padding: 10px 13px; background: #8d3e37; color: #fff; font-weight: 800; cursor: pointer; }
     button.secondary { background: #71675c; }
+    button:disabled { background: #c9bcab; cursor: not-allowed; }
     input, select { width: 100%; border: 1px solid #d9cdbc; border-radius: 6px; padding: 9px; font: inherit; background: #fff; }
     label { display: block; margin: 9px 0 5px; color: #76695e; font-size: 13px; }
-    .app { display: grid; grid-template-columns: 280px 1fr 320px; gap: 16px; padding: 16px; }
+    .app { display: grid; grid-template-columns: 280px 1fr 340px; gap: 16px; padding: 16px; align-items: start; }
     .panel { background: #fffaf2; border: 1px solid #d9cdbc; border-radius: 8px; padding: 14px; }
     .grid { display: grid; gap: 2px; margin: 0 auto; width: min(100%, 720px); border: 6px solid #72533c; background: #72533c; }
     .cell { aspect-ratio: 1; background: #f8ead2; cursor: pointer; border-radius: 2px; }
+    .cell.slicing { cursor: crosshair; }
     .palette { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
     .swatch { aspect-ratio: 1; border-radius: 8px; border: 3px solid transparent; cursor: pointer; }
     .swatch.active { border-color: #1f1b16; }
@@ -26,14 +29,38 @@
     .preview { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; border: 1px solid #d9cdbc; padding: 6px; margin-top: 8px; }
     .mini { aspect-ratio: 1; border-radius: 2px; }
     .toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .toolbar.three { grid-template-columns: 1fr 1fr 1fr; }
     .warning { color: #a03a2e; font-weight: 800; }
+    .ok { color: #2f6b2f; font-weight: 800; }
+    .hint { color: #76695e; font-size: 12px; }
+    .piece { border: 1px solid #d9cdbc; border-radius: 8px; padding: 8px; margin-top: 8px; background: #fffdf8; }
+    .piece-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 13px; }
+    .piece-head button { padding: 4px 8px; font-size: 12px; }
+    .piece-ctrls { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; }
+    .piece-ctrls label { margin: 4px 0 2px; }
+    .piece-ctrls input { padding: 5px; }
+    #layoutView { max-width: 100%; border: 1px solid #d9cdbc; background: #f8ead2; margin-top: 8px; }
+    .seam-list { margin: 6px 0; padding-left: 18px; color: #a03a2e; font-size: 13px; }
+    .budget-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+    .budget-table td { border-bottom: 1px solid #e1d5c5; padding: 5px 0; }
+    .craft { font-size: 13px; margin-top: 8px; }
+    .craft table { width: 100%; border-collapse: collapse; }
+    .craft td, .craft th { border-bottom: 1px solid #e1d5c5; padding: 4px 4px 4px 0; text-align: left; vertical-align: top; }
     @media (max-width: 1000px) { header { display: block; } .app { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <header>
-    <div><h1>手工织锦纹样排版台</h1><div>绘制经纬网格纹样，统计色线用量并保存方案。</div></div>
-    <div class="toolbar"><button id="saveBtn">保存方案</button><button id="exportBtn" class="secondary">导出JSON</button></div>
+    <div><h1>手工织锦纹样排版台</h1><div>绘制经纬网格纹样，分片拼版、核算织造预算并保存方案。</div></div>
+    <div>
+      <div class="toolbar three">
+        <button id="saveBtn">保存方案</button>
+        <button id="exportBtn" class="secondary">导出JSON</button>
+        <button id="importBtn" class="secondary">导入JSON</button>
+      </div>
+      <div id="saveMsg" class="hint"></div>
+      <input type="file" id="importFile" accept="application/json,.json" hidden>
+    </div>
   </header>
   <main class="app">
     <aside class="panel">
@@ -49,55 +76,245 @@
         <button data-block="cross" class="secondary">十字</button>
         <button data-block="diamond" class="secondary">小菱形</button>
       </div>
+      <h2>分片拼版</h2>
+      <button id="modeBtn" class="secondary">切换到划片模式</button>
+      <p class="hint">划片模式下在画布上拖出矩形织片；织片不得重叠。偏移决定织片在版图中的位置（单位：格）。</p>
+      <div id="sliceMsg"></div>
+      <div id="pieceList"></div>
     </aside>
-    <section class="panel"><div class="grid" id="grid"></div></section>
+    <section class="panel">
+      <div class="grid" id="grid"></div>
+      <h2>拼接总预览</h2>
+      <canvas id="layoutView"></canvas>
+      <div id="layoutInfo" class="hint"></div>
+    </section>
     <aside class="panel">
       <h2>操作</h2>
       <div class="toolbar"><button id="undoBtn" class="secondary">撤销</button><button id="redoBtn" class="secondary">重做</button></div>
-      <p>点击填色，按住拖动可连续填色。</p>
+      <p class="hint">点击填色，按住拖动可连续填色。撤销/重做同时恢复分片。</p>
       <h2>用色统计</h2>
       <div class="stats" id="stats"></div>
       <h2>重复单元预览</h2>
       <div class="preview" id="preview"></div>
       <h2>断线风险</h2>
       <div id="risk"></div>
+      <h2>织造预算</h2>
+      <label>目标幅宽 (cm)</label><input id="bWidth" type="number" min="1" step="1">
+      <label>目标长度 (cm)</label><input id="bLength" type="number" min="1" step="1">
+      <label>缩率 (%)</label><input id="bShrink" type="number" min="0" max="90" step="0.5">
+      <div id="budgetOut"></div>
+      <h2>工艺结果</h2>
+      <div id="seams"></div>
+      <button id="confirmBtn">生成工艺结果</button>
+      <div class="craft" id="craft"></div>
     </aside>
   </main>
   <script>
     const colors = ["#f7e7c4","#a6322d","#1f5f78","#d6a437","#355b38","#713d7b","#1e1b18","#e98c52"];
+    const CELL_CM = 0.5;      // 每格成品边长 (cm)
+    const YARN_PER_CELL = 1;  // 每格用线 (cm，经纬合计)
+    const SEAM_CM = 3;        // 每格接缝耗线 (cm)
+    const STORE = "zfl31Pattern";
     const grid = document.querySelector("#grid");
     const palette = document.querySelector("#palette");
     const stats = document.querySelector("#stats");
     const preview = document.querySelector("#preview");
     const risk = document.querySelector("#risk");
+    const pieceList = document.querySelector("#pieceList");
+    const layoutView = document.querySelector("#layoutView");
+    const layoutInfo = document.querySelector("#layoutInfo");
+    const budgetOut = document.querySelector("#budgetOut");
+    const seamsBox = document.querySelector("#seams");
+    const confirmBtn = document.querySelector("#confirmBtn");
+    const craftBox = document.querySelector("#craft");
+    const saveMsg = document.querySelector("#saveMsg");
     let cols = 18, rows = 14, active = 1, block = "dot", dragging = false;
     let cells = [];
+    let pieces = [];           // {id, x, y, w, h, repX, repY, offX, offY}
+    let confirmed = false;     // 工艺结果确认状态
+    let budget = { width: 60, length: 120, shrink: 8 };
     let undo = [], redo = [];
+    let mode = "paint";        // paint | slice
+    let sliceStart = null, sliceRect = null, sliceMsg = "";
+    let pieceSeq = 1;
+
+    const num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+    const clampInt = (v, a, b) => Math.min(b, Math.max(a, Math.round(Number(v) || 0)));
+    const deep = o => JSON.parse(JSON.stringify(o));
+
+    function persist() {
+      localStorage.setItem(STORE, JSON.stringify({ cols, rows, cells, pieces, confirmed, budget, pieceSeq }));
+    }
+    function sanitizePieces(list) {
+      if (!Array.isArray(list)) return [];
+      const out = [];
+      list.forEach(p => {
+        const q = {
+          id: clampInt(p.id, 0, 1e9),
+          x: clampInt(p.x, 0, cols - 1), y: clampInt(p.y, 0, rows - 1),
+          w: clampInt(p.w, 1, cols), h: clampInt(p.h, 1, rows),
+          repX: clampInt(p.repX, 1, 24), repY: clampInt(p.repY, 1, 24),
+          offX: clampInt(p.offX, 0, 500), offY: clampInt(p.offY, 0, 500)
+        };
+        if (q.x + q.w > cols || q.y + q.h > rows) return;
+        if (out.some(o => q.x < o.x + o.w && o.x < q.x + q.w && q.y < o.y + o.h && o.y < q.y + q.h)) return;
+        out.push(q);
+      });
+      return out;
+    }
     function init(loadSaved = true) {
-      const saved = loadSaved && JSON.parse(localStorage.getItem("zfl31Pattern") || "null");
-      if (saved) { cols = saved.cols; rows = saved.rows; cells = saved.cells; }
-      else { cols = Number(document.querySelector("#cols").value); rows = Number(document.querySelector("#rows").value); cells = Array(cols * rows).fill(0); }
+      const saved = loadSaved && JSON.parse(localStorage.getItem(STORE) || "null");
+      if (saved && Array.isArray(saved.cells) && saved.cells.length === saved.cols * saved.rows) {
+        cols = saved.cols; rows = saved.rows;
+        cells = saved.cells.map(v => clampInt(v, 0, colors.length - 1));
+        pieces = sanitizePieces(saved.pieces);
+        confirmed = !!saved.confirmed;
+        if (saved.budget) budget = { width: num(saved.budget.width, 60), length: num(saved.budget.length, 120), shrink: num(saved.budget.shrink, 8) };
+        pieceSeq = num(saved.pieceSeq, 0) || pieces.reduce((m, p) => Math.max(m, p.id), 0) + 1;
+      } else {
+        cols = Number(document.querySelector("#cols").value); rows = Number(document.querySelector("#rows").value);
+        cells = Array(cols * rows).fill(0);
+        pieces = []; confirmed = false;
+      }
       document.querySelector("#cols").value = cols; document.querySelector("#rows").value = rows;
+      document.querySelector("#bWidth").value = budget.width;
+      document.querySelector("#bLength").value = budget.length;
+      document.querySelector("#bShrink").value = budget.shrink;
       render();
     }
+    function effectivePieces() {
+      return pieces.length ? pieces : [{ id: 0, x: 0, y: 0, w: cols, h: rows, repX: 1, repY: 1, offX: 0, offY: 0 }];
+    }
+    // 扫描相邻织片边界：bad 为色序不匹配的具体缝隙，seamCells 为全部接缝长度（格）
+    function seamScan() {
+      const bad = [];
+      let seamCells = 0;
+      for (let a = 0; a < pieces.length; a++) for (let b = a + 1; b < pieces.length; b++) {
+        const A = pieces[a], B = pieces[b];
+        if (A.x + A.w === B.x || B.x + B.w === A.x) {
+          const L = A.x + A.w === B.x ? A : B, R = L === A ? B : A;
+          const y0 = Math.max(L.y, R.y), y1 = Math.min(L.y + L.h, R.y + R.h);
+          for (let y = y0; y < y1; y++) {
+            seamCells++;
+            if (cells[y * cols + L.x + L.w - 1] !== cells[y * cols + R.x]) bad.push({ type: "v", x: R.x, y, la: L.id, lb: R.id });
+          }
+        }
+        if (A.y + A.h === B.y || B.y + B.h === A.y) {
+          const T = A.y + A.h === B.y ? A : B, D = T === A ? B : A;
+          const x0 = Math.max(T.x, D.x), x1 = Math.min(T.x + T.w, D.x + D.w);
+          for (let x = x0; x < x1; x++) {
+            seamCells++;
+            if (cells[(T.y + T.h - 1) * cols + x] !== cells[D.y * cols + x]) bad.push({ type: "h", x, y: D.y, la: T.id, lb: D.id });
+          }
+        }
+      }
+      return { bad, seamCells };
+    }
+
     function render() {
+      renderPalette();
+      renderGrid();
+      renderPieces();
+      renderStats();
+      renderLayout();
+      renderBudget();
+      renderCraft();
+    }
+    function renderPalette() {
       palette.innerHTML = colors.map((c, i) => '<button class="swatch '+(i===active?'active':'')+'" data-color="'+i+'" style="background:'+c+'"></button>').join("");
       palette.querySelectorAll("[data-color]").forEach(el => el.onclick = () => { active = Number(el.dataset.color); render(); });
-      grid.style.gridTemplateColumns = "repeat("+cols+", 1fr)";
-      grid.innerHTML = cells.map((v, i) => '<div class="cell" data-i="'+i+'" style="background:'+colors[v]+'"></div>').join("");
-      grid.querySelectorAll(".cell").forEach(el => {
-        el.onpointerdown = () => { dragging = true; paint(Number(el.dataset.i)); };
-        el.onpointerenter = () => { if (dragging) paint(Number(el.dataset.i)); };
-      });
-      window.onpointerup = () => dragging = false;
-      renderStats();
     }
-    function snapshot() { undo.push([...cells]); redo = []; if (undo.length > 50) undo.shift(); }
+    function renderGrid() {
+      const scan = seamScan();
+      const marks = {};
+      const mark = (i, side, color) => { (marks[i] = marks[i] || {})[side] = color; };
+      pieces.forEach(p => {
+        for (let x = p.x; x < p.x + p.w; x++) { mark(p.y * cols + x, "t", "#8a6d2f"); mark((p.y + p.h - 1) * cols + x, "b", "#8a6d2f"); }
+        for (let y = p.y; y < p.y + p.h; y++) { mark(y * cols + p.x, "l", "#8a6d2f"); mark(y * cols + p.x + p.w - 1, "r", "#8a6d2f"); }
+      });
+      scan.bad.forEach(s => {
+        if (s.type === "v") { mark(s.y * cols + s.x - 1, "r", "#d61f1f"); mark(s.y * cols + s.x, "l", "#d61f1f"); }
+        else { mark((s.y - 1) * cols + s.x, "b", "#d61f1f"); mark(s.y * cols + s.x, "t", "#d61f1f"); }
+      });
+      if (sliceRect) {
+        for (let y = sliceRect.y; y < sliceRect.y + sliceRect.h; y++) for (let x = sliceRect.x; x < sliceRect.x + sliceRect.w; x++)
+          marks[y * cols + x] = { t: "#1f5f88", r: "#1f5f88", b: "#1f5f88", l: "#1f5f88" };
+      }
+      grid.style.gridTemplateColumns = "repeat("+cols+", 1fr)";
+      grid.innerHTML = cells.map((v, i) => {
+        const m = marks[i];
+        const shadow = m ? "box-shadow:" + [
+          m.t ? "inset 0 3px 0 0 " + m.t : "",
+          m.r ? "inset -3px 0 0 0 " + m.r : "",
+          m.b ? "inset 0 -3px 0 0 " + m.b : "",
+          m.l ? "inset 3px 0 0 0 " + m.l : ""
+        ].filter(Boolean).join(",") + ";" : "";
+        return '<div class="cell'+(mode==="slice"?" slicing":"")+'" data-i="'+i+'" style="background:'+colors[v]+";"+shadow+'"></div>';
+      }).join("");
+      grid.querySelectorAll(".cell").forEach(el => {
+        el.onpointerdown = () => {
+          const i = Number(el.dataset.i);
+          if (mode === "slice") {
+            sliceStart = { x: i % cols, y: Math.floor(i / cols) };
+            sliceRect = { x: sliceStart.x, y: sliceStart.y, w: 1, h: 1 };
+            render();
+          } else { dragging = true; paint(i); }
+        };
+        el.onpointerenter = () => {
+          const i = Number(el.dataset.i);
+          if (mode === "slice" && sliceStart) {
+            const x = i % cols, y = Math.floor(i / cols);
+            sliceRect = { x: Math.min(x, sliceStart.x), y: Math.min(y, sliceStart.y), w: Math.abs(x - sliceStart.x) + 1, h: Math.abs(y - sliceStart.y) + 1 };
+            render();
+          } else if (mode === "paint" && dragging) paint(i);
+        };
+      });
+      window.onpointerup = () => { dragging = false; if (sliceStart) finishSlice(); };
+    }
+    function finishSlice() {
+      const r = sliceRect; sliceStart = null; sliceRect = null;
+      if (!r) return;
+      if (pieces.some(p => r.x < p.x + p.w && p.x < r.x + r.w && r.y < p.y + p.h && p.y < r.y + r.h)) {
+        sliceMsg = "与现有织片重叠，未添加。";
+      } else {
+        snapshot();
+        pieces.push({ id: pieceSeq++, x: r.x, y: r.y, w: r.w, h: r.h, repX: 1, repY: 1, offX: r.x, offY: r.y });
+        sliceMsg = "";
+        confirmed = false;
+      }
+      persist(); render();
+    }
+    function renderPieces() {
+      document.querySelector("#modeBtn").textContent = mode === "paint" ? "切换到划片模式" : "切换到绘制模式";
+      document.querySelector("#sliceMsg").innerHTML = sliceMsg ? '<p class="warning">'+sliceMsg+'</p>' : "";
+      if (!pieces.length) { pieceList.innerHTML = '<p class="hint">尚未划分织片，整幅按一片参与拼版与预算。</p>'; return; }
+      pieceList.innerHTML = pieces.map(p =>
+        '<div class="piece" data-id="'+p.id+'">' +
+          '<div class="piece-head"><b>织片#'+p.id+'</b><span>列'+(p.x+1)+'–'+(p.x+p.w)+' · 行'+(p.y+1)+'–'+(p.y+p.h)+'（'+p.w+'×'+p.h+'）</span><button class="del secondary">删除</button></div>' +
+          '<div class="piece-ctrls">' +
+            '<label>列重复</label><label>行重复</label>' +
+            '<input type="number" min="1" max="24" value="'+p.repX+'" data-k="repX"><input type="number" min="1" max="24" value="'+p.repY+'" data-k="repY">' +
+            '<label>横向偏移</label><label>纵向偏移</label>' +
+            '<input type="number" min="0" max="500" value="'+p.offX+'" data-k="offX"><input type="number" min="0" max="500" value="'+p.offY+'" data-k="offY">' +
+          '</div>' +
+        '</div>').join("");
+      pieceList.querySelectorAll(".piece").forEach(el => {
+        const p = pieces.find(q => q.id === Number(el.dataset.id));
+        el.querySelector(".del").onclick = () => { snapshot(); pieces = pieces.filter(q => q.id !== p.id); confirmed = false; persist(); render(); };
+        el.querySelectorAll("input").forEach(inp => inp.onchange = () => {
+          snapshot();
+          p[inp.dataset.k] = clampInt(inp.value, Number(inp.min), Number(inp.max));
+          confirmed = false; persist(); render();
+        });
+      });
+    }
+    function snapshot() { undo.push({ c: [...cells], p: deep(pieces) }); redo = []; if (undo.length > 50) undo.shift(); }
     function paint(i) {
       snapshot();
       const targets = pattern(i);
       targets.forEach(t => { if (t >= 0 && t < cells.length) cells[t] = active; });
-      render();
+      confirmed = false;
+      persist(); render();
     }
     function pattern(i) {
       const x = i % cols, y = Math.floor(i / cols);
@@ -109,7 +326,7 @@
     function renderStats() {
       const counts = colors.map((_, i) => cells.filter(v => v === i).length);
       stats.innerHTML = counts.map((n, i) => '<div class="stat"><span><span style="display:inline-block;width:14px;height:14px;background:'+colors[i]+'"></span> 色线'+i+'</span><b>'+n+'</b></div>').join("");
-      preview.innerHTML = Array.from({length: 36}, (_, i) => '<div class="mini" style="background:'+colors[cells[(i % 6) + Math.floor(i / 6) * cols] || colors[0]]+'"></div>').join("");
+      preview.innerHTML = Array.from({length: 36}, (_, i) => '<div class="mini" style="background:'+colors[cells[(i % 6) + Math.floor(i / 6) * cols] || 0]+'"></div>').join("");
       const riskRows = [];
       for (let y = 0; y < rows; y++) {
         let switches = 0;
@@ -118,15 +335,182 @@
       }
       risk.innerHTML = riskRows.length ? '<p class="warning">第'+riskRows.join("、")+'行换色过密，可能断线。</p>' : '<p>暂无明显断线风险。</p>';
     }
+    function layoutSize() {
+      let W = 1, H = 1;
+      effectivePieces().forEach(p => { W = Math.max(W, p.offX + p.w * p.repX); H = Math.max(H, p.offY + p.h * p.repY); });
+      return { W, H };
+    }
+    function renderLayout() {
+      const ps = effectivePieces();
+      const { W, H } = layoutSize();
+      const scale = Math.max(3, Math.min(16, Math.floor(560 / Math.max(W, H))));
+      layoutView.width = W * scale; layoutView.height = H * scale;
+      const ctx = layoutView.getContext("2d");
+      ctx.fillStyle = "#f8ead2"; ctx.fillRect(0, 0, layoutView.width, layoutView.height);
+      ps.forEach(p => {
+        for (let i = 0; i < p.repX; i++) for (let j = 0; j < p.repY; j++) {
+          const ox = p.offX + i * p.w, oy = p.offY + j * p.h;
+          for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) {
+            ctx.fillStyle = colors[cells[(p.y + y) * cols + p.x + x]];
+            ctx.fillRect((ox + x) * scale, (oy + y) * scale, scale, scale);
+          }
+        }
+      });
+      ctx.strokeStyle = "#5a4326"; ctx.lineWidth = 2;
+      ps.forEach(p => {
+        for (let i = 0; i < p.repX; i++) for (let j = 0; j < p.repY; j++) {
+          const ox = p.offX + i * p.w, oy = p.offY + j * p.h;
+          ctx.strokeRect(ox * scale + 1, oy * scale + 1, p.w * scale - 2, p.h * scale - 2);
+        }
+        ctx.fillStyle = "#282018"; ctx.font = "bold 11px sans-serif";
+        ctx.fillText(p.id === 0 ? "整幅" : "#" + p.id, p.offX * scale + 3, p.offY * scale + 12);
+      });
+      const scan = seamScan();
+      ctx.strokeStyle = "#d61f1f"; ctx.lineWidth = 3;
+      scan.bad.forEach(s => {
+        const owner = ps.find(p => p.id === s.la);
+        if (!owner) return;
+        for (let i = 0; i < owner.repX; i++) for (let j = 0; j < owner.repY; j++) {
+          const ox = owner.offX + i * owner.w, oy = owner.offY + j * owner.h;
+          ctx.beginPath();
+          if (s.type === "v") {
+            const gx = (ox + owner.w) * scale, gy = (oy + (s.y - owner.y)) * scale;
+            ctx.moveTo(gx, gy); ctx.lineTo(gx, gy + scale);
+          } else {
+            const gx = (ox + (s.x - owner.x)) * scale, gy = (oy + owner.h) * scale;
+            ctx.moveTo(gx, gy); ctx.lineTo(gx + scale, gy);
+          }
+          ctx.stroke();
+        }
+      });
+      const perPlate = ps.reduce((n, p) => n + p.repX * p.repY, 0);
+      layoutInfo.innerHTML = "版图 "+W+"×"+H+" 格 ≈ "+(W*CELL_CM).toFixed(1)+"×"+(H*CELL_CM).toFixed(1)+" cm · 每版织片 "+perPlate+" 片" +
+        (scan.bad.length ? ' · <span class="warning">'+scan.bad.length+' 处缝隙色序不匹配</span>' : "");
+    }
+    function computeBudget() {
+      const ps = effectivePieces();
+      const { W, H } = layoutSize();
+      const perColor = colors.map(() => 0);
+      let perPlate = 0;
+      ps.forEach(p => {
+        perPlate += p.repX * p.repY;
+        for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) perColor[cells[(p.y + y) * cols + p.x + x]] += p.repX * p.repY;
+      });
+      const s = Math.min(Math.max(budget.shrink, 0), 90) / 100;
+      const needW = Math.max(budget.width, 0) / (1 - s), needL = Math.max(budget.length, 0) / (1 - s);
+      const plateW = W * CELL_CM, plateH = H * CELL_CM;
+      const nx = Math.max(1, Math.ceil(needW / plateW - 1e-9)), ny = Math.max(1, Math.ceil(needL / plateH - 1e-9));
+      const plates = nx * ny;
+      const scan = seamScan();
+      return {
+        W, H, plateW, plateH, needW, needL, nx, ny, plates, perPlate,
+        totalPieces: perPlate * plates,
+        perColor: perColor.map(n => n * plates),
+        seamCells: scan.seamCells * plates,
+        seamLoss: scan.seamCells * plates * SEAM_CM / 100
+      };
+    }
+    function renderBudget() {
+      const b = computeBudget();
+      budgetOut.innerHTML =
+        '<table class="budget-table">' +
+        "<tr><td>缩率补偿后尺寸</td><td><b>"+b.needW.toFixed(1)+" × "+b.needL.toFixed(1)+" cm</b></td></tr>" +
+        "<tr><td>单版尺寸</td><td>"+b.plateW.toFixed(1)+" × "+b.plateH.toFixed(1)+" cm（"+b.W+"×"+b.H+" 格）</td></tr>" +
+        "<tr><td>排版</td><td>横向 "+b.nx+" 版 × 纵向 "+b.ny+" 版 ＝ "+b.plates+" 版</td></tr>" +
+        "<tr><td>分片数量</td><td><b>每版 "+b.perPlate+" 片 × "+b.plates+" 版 ＝ "+b.totalPieces+" 片</b></td></tr>" +
+        "<tr><td>接缝耗损</td><td><b>"+b.seamLoss.toFixed(1)+" m</b>（接缝 "+b.seamCells+" 格）</td></tr>" +
+        b.perColor.map((n, i) => '<tr><td><span style="display:inline-block;width:12px;height:12px;background:'+colors[i]+'"></span> 色线'+i+'</td><td>'+n+' 格 ≈ '+(n*YARN_PER_CELL/100).toFixed(1)+' m</td></tr>').join("") +
+        "</table>" +
+        '<p class="hint">假设：每格 '+CELL_CM+' cm · 每格用线 '+YARN_PER_CELL+' cm · 接缝每格耗线 '+SEAM_CM+' cm。</p>';
+    }
+    function renderCraft() {
+      const scan = seamScan();
+      if (scan.bad.length) {
+        seamsBox.innerHTML = '<p class="warning">发现 '+scan.bad.length+' 处边界色序不匹配：</p><ul class="seam-list">' +
+          scan.bad.map(s => "<li>" + (s.type === "v"
+            ? "竖缝 · 第"+s.x+"–"+(s.x+1)+"列交界 · 第"+(s.y+1)+"行"
+            : "横缝 · 第"+s.y+"–"+(s.y+1)+"行交界 · 第"+(s.x+1)+"列") +
+            "（织片#"+s.la+" ↔ #"+s.lb+"）</li>").join("") + "</ul>";
+        confirmBtn.disabled = true;
+        craftBox.innerHTML = '<p class="hint">处理全部缝隙后才能生成工艺结果。</p>';
+        return;
+      }
+      seamsBox.innerHTML = pieces.length ? '<p class="ok">相邻织片边界色序全部匹配。</p>' : '<p class="hint">尚未分片，整幅按一片处理。</p>';
+      confirmBtn.disabled = false;
+      if (!confirmed) { craftBox.innerHTML = '<p class="hint">尚未生成工艺结果；改动画布或分片会使已确认结果立即失效。</p>'; return; }
+      const ps = effectivePieces();
+      const rowsHtml = ps.map(p => {
+        const cnt = colors.map(() => 0);
+        for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) cnt[cells[(p.y + y) * cols + p.x + x]]++;
+        const used = cnt.map((n, ci) => n ? "色线"+ci+"×"+n : "").filter(Boolean).join("、");
+        return "<tr><td>"+(p.id === 0 ? "整幅" : "织片#"+p.id)+"</td><td>列"+(p.x+1)+"–"+(p.x+p.w)+" 行"+(p.y+1)+"–"+(p.y+p.h)+"</td><td>"+p.w+"×"+p.h+"</td><td>"+p.repX+"×"+p.repY+"＝"+(p.repX*p.repY)+"片</td><td>"+used+"</td></tr>";
+      }).join("");
+      craftBox.innerHTML = '<p class="ok">✔ 工艺结果已确认生效。</p>' +
+        '<table><tr><th>织片</th><th>区域</th><th>规格</th><th>重复</th><th>单片各色格数</th></tr>'+rowsHtml+'</table>';
+    }
+
     document.querySelectorAll("[data-block]").forEach(btn => btn.onclick = () => block = btn.dataset.block);
-    document.querySelector("#newBtn").onclick = () => { undo = []; redo = []; init(false); };
-    document.querySelector("#undoBtn").onclick = () => { if (!undo.length) return; redo.push([...cells]); cells = undo.pop(); render(); };
-    document.querySelector("#redoBtn").onclick = () => { if (!redo.length) return; undo.push([...cells]); cells = redo.pop(); render(); };
-    document.querySelector("#saveBtn").onclick = () => localStorage.setItem("zfl31Pattern", JSON.stringify({ cols, rows, cells }));
+    document.querySelector("#modeBtn").onclick = () => { mode = mode === "paint" ? "slice" : "paint"; sliceStart = null; sliceRect = null; sliceMsg = ""; render(); };
+    document.querySelector("#newBtn").onclick = () => {
+      if (pieces.length && !window.confirm("新建网格将清空现有分片与工艺确认，继续吗？")) return;
+      undo = []; redo = []; pieces = []; confirmed = false; init(false); persist();
+    };
+    document.querySelector("#undoBtn").onclick = () => {
+      if (!undo.length) return;
+      redo.push({ c: [...cells], p: deep(pieces) });
+      const s = undo.pop(); cells = s.c; pieces = s.p;
+      confirmed = false; persist(); render();
+    };
+    document.querySelector("#redoBtn").onclick = () => {
+      if (!redo.length) return;
+      undo.push({ c: [...cells], p: deep(pieces) });
+      const s = redo.pop(); cells = s.c; pieces = s.p;
+      confirmed = false; persist(); render();
+    };
+    [["#bWidth","width"],["#bLength","length"],["#bShrink","shrink"]].forEach(([sel, k]) => {
+      document.querySelector(sel).oninput = e => { budget[k] = num(e.target.value, 0); persist(); renderBudget(); };
+    });
+    confirmBtn.onclick = () => {
+      if (seamScan().bad.length) return;
+      confirmed = true; persist(); render();
+    };
+    document.querySelector("#saveBtn").onclick = () => { persist(); saveMsg.innerHTML = '<span class="ok">已保存 ✓</span>'; };
     document.querySelector("#exportBtn").onclick = () => {
-      const data = { cols, rows, cells, usage: colors.map((color, i) => ({ color, count: cells.filter(v => v === i).length })) };
+      const data = {
+        cols, rows, cells, pieces, confirmed, budget, pieceSeq,
+        usage: colors.map((color, i) => ({ color, count: cells.filter(v => v === i).length }))
+      };
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "brocade-pattern.json"; a.click(); URL.revokeObjectURL(a.href);
+    };
+    document.querySelector("#importBtn").onclick = () => document.querySelector("#importFile").click();
+    document.querySelector("#importFile").onchange = e => {
+      const f = e.target.files[0];
+      e.target.value = "";
+      if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => {
+        try {
+          const d = JSON.parse(rd.result);
+          if (!d || !Array.isArray(d.cells) || d.cells.length !== d.cols * d.rows) throw new Error("bad");
+          cols = d.cols; rows = d.rows;
+          cells = d.cells.map(v => clampInt(v, 0, colors.length - 1));
+          pieces = sanitizePieces(d.pieces);
+          confirmed = !!d.confirmed;
+          if (d.budget) budget = { width: num(d.budget.width, 60), length: num(d.budget.length, 120), shrink: num(d.budget.shrink, 8) };
+          pieceSeq = num(d.pieceSeq, 0) || pieces.reduce((m, p) => Math.max(m, p.id), 0) + 1;
+          undo = []; redo = []; mode = "paint"; sliceStart = null; sliceRect = null; sliceMsg = "";
+          document.querySelector("#cols").value = cols; document.querySelector("#rows").value = rows;
+          document.querySelector("#bWidth").value = budget.width;
+          document.querySelector("#bLength").value = budget.length;
+          document.querySelector("#bShrink").value = budget.shrink;
+          persist(); render();
+          saveMsg.innerHTML = '<span class="ok">已导入并完整还原 ✓</span>';
+        } catch (err) {
+          saveMsg.innerHTML = '<span class="warning">导入失败：文件格式不正确。</span>';
+        }
+      };
+      rd.readAsText(f);
     };
     init();
   </script>
